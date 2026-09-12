@@ -3,34 +3,105 @@
 
 // Import cheerio for HTML parsing (React Native compatible)
 const cheerio = require('cheerio-without-node-native');
+const crypto = require('crypto');
 
 console.log('[HDRezka] Using cheerio-without-node-native for DOM parsing');
 
 // Constants
 const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 const REZKA_BASE = 'https://hdrezka.ag/';
+let activeBase = REZKA_BASE;
+const cookieJar = new Map([
+    ['allowed_comments', '1'],
+    ['_ym_isad', '1'],
+    ['_ym_visorc', 'b'],
+    ['dle_newpm', '0']
+]);
 const BASE_HEADERS = {
-    'X-Hdrezka-Android-App': '1',
-    'X-Hdrezka-Android-App-Version': '2.2.0',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.5',
     'Connection': 'keep-alive'
 };
 
 // Helper function to make HTTP requests
-function makeRequest(url, options = {}) {
+function rememberCookies(response) {
+    const cookies = typeof response.headers.getSetCookie === 'function'
+        ? response.headers.getSetCookie()
+        : [response.headers.get('set-cookie')].filter(Boolean);
+    cookies.forEach(cookie => {
+        const match = cookie.match(/^([^=;,]+)=([^;]*)/);
+        if (match) cookieJar.set(match[1], match[2]);
+    });
+}
+
+function makeRequest(url, options = {}, redirects = 0) {
+    const headers = {
+        ...BASE_HEADERS,
+        'Cookie': Array.from(cookieJar, ([name, value]) => `${name}=${value}`).join('; '),
+        ...options.headers
+    };
     return fetch(url, {
         ...options,
-        headers: {
-            ...BASE_HEADERS,
-            ...options.headers
-        }
+        redirect: 'manual',
+        headers
     }).then(function (response) {
+        rememberCookies(response);
+        if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
+            if (redirects >= 5) throw new Error('Too many redirects');
+            const nextUrl = new URL(response.headers.get('location'), url).toString();
+            const nextOptions = response.status === 307 || response.status === 308
+                ? options
+                : { method: 'GET', headers: options.headers };
+            return makeRequest(nextUrl, nextOptions, redirects + 1);
+        }
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         return response;
+    });
+}
+
+function solveAnubis(html, pageUrl) {
+    const challengeMatch = html.match(/<script id="anubis_challenge"[^>]*>([\s\S]*?)<\/script>/);
+    if (!challengeMatch) return Promise.reject(new Error('Anubis challenge data not found'));
+    const challenge = JSON.parse(challengeMatch[1].trim());
+    const difficulty = challenge.rules.difficulty;
+    const prefix = '0'.repeat(difficulty);
+    const started = Date.now();
+    let nonce = 0;
+    let hash = '';
+    while (nonce < 1 << 30) {
+        hash = crypto.createHash('sha256').update(challenge.challenge.randomData + nonce).digest('hex');
+        if (hash.startsWith(prefix)) break;
+        nonce++;
+    }
+    if (!hash.startsWith(prefix)) return Promise.reject(new Error('Anubis proof of work failed'));
+    const baseMatch = html.match(/<script id="anubis_base_prefix"[^>]*>([\s\S]*?)<\/script>/);
+    let basePrefix = '';
+    if (baseMatch) {
+        try { basePrefix = JSON.parse(baseMatch[1].trim()); } catch (_) {}
+    }
+    const passUrl = new URL(`${basePrefix}/.within.website/x/cmd/anubis/api/pass-challenge`, pageUrl);
+    passUrl.search = new URLSearchParams({
+        id: challenge.challenge.id,
+        response: hash,
+        nonce: String(nonce),
+        redir: pageUrl,
+        elapsedTime: String(Date.now() - started + 500)
+    });
+    console.log(`[HDRezka] Solved Anubis challenge at difficulty ${difficulty}`);
+    return makeRequest(passUrl.toString(), { headers: { 'Referer': pageUrl } });
+}
+
+function fetchPage(url, options = {}) {
+    return makeRequest(url, options).then(function (response) {
+        return response.text().then(function (html) {
+            if (!html.includes('id="anubis_challenge"')) return { response, html };
+            return solveAnubis(html, response.url).then(function (solvedResponse) {
+                return solvedResponse.text().then(solvedHtml => ({ response: solvedResponse, html: solvedHtml }));
+            });
+        });
     });
 }
 
@@ -62,6 +133,7 @@ function parseVideoLinks(inputString) {
         return {};
     }
 
+    inputString = decodeVideoPayload(inputString);
     console.log(`[HDRezka] Parsing video links from stream URL data`);
     const linksArray = inputString.split(',');
     const result = {};
@@ -103,6 +175,25 @@ function parseVideoLinks(inputString) {
 
     console.log(`[HDRezka] Found ${Object.keys(result).length} valid qualities: ${Object.keys(result).join(', ')}`);
     return result;
+}
+
+function decodeVideoPayload(value) {
+    if (!value || value.startsWith('[') || value.startsWith('http')) return value;
+    const salts = [
+        'IyMjI14hISMjIUBA', 'QEBAQEAhIyMhXl5e',
+        'JCQhIUAkJEBeIUAjJCRA', 'JCQjISFAIyFAIyM=', 'Xl5eIUAjIyEhIyM='
+    ];
+    let encoded = value.replace(/^#h/, '');
+    for (let i = 0; i < 60 && encoded.includes('//_//'); i++) {
+        const index = encoded.indexOf('//_//');
+        const after = encoded.slice(index + 5);
+        const salt = salts.find(candidate => after.startsWith(candidate));
+        encoded = salt
+            ? encoded.slice(0, index) + after.slice(salt.length)
+            : encoded.slice(0, index) + after.slice(16);
+    }
+    try { return Buffer.from(encoded, 'base64').toString('utf8'); }
+    catch (_) { return value; }
 }
 
 // Parse subtitles from HDRezka response (optimized)
@@ -218,9 +309,8 @@ function getTranslatorId(url, id, media) {
     const fullUrl = url.startsWith('http') ? url : `${REZKA_BASE}${url.startsWith('/') ? url.substring(1) : url}`;
     console.log(`[HDRezka] Making request to: ${fullUrl}`);
 
-    return makeRequest(fullUrl).then(function (response) {
-        return response.text();
-    }).then(function (responseText) {
+    return fetchPage(fullUrl, { headers: { 'Referer': activeBase } }).then(function ({ response, html: responseText }) {
+        activeBase = new URL(response.url).origin + '/';
         console.log(`[HDRezka] Translator page response length: ${responseText.length}`);
 
         // Translator ID 238 represents the Original + subtitles player.
@@ -257,14 +347,17 @@ function getStreamData(id, translatorId, media) {
     searchParams.append('favs', randomFavs);
     searchParams.append('action', media.type === 'tv' ? 'get_stream' : 'get_movie');
 
-    const fullUrl = `${REZKA_BASE}ajax/get_cdn_series/`;
+    const fullUrl = `${activeBase}ajax/get_cdn_series/?t=${Date.now()}`;
     console.log(`[HDRezka] Making stream request with action=${media.type === 'tv' ? 'get_stream' : 'get_movie'}`);
 
     return makeRequest(fullUrl, {
         method: 'POST',
         body: searchParams,
         headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Origin': new URL(activeBase).origin,
+            'Referer': activeBase
         }
     }).then(function (response) {
         return response.text();
