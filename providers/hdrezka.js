@@ -9,7 +9,7 @@ console.log('[HDRezka] Using cheerio-without-node-native for DOM parsing');
 
 // Constants
 const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
-const REZKA_BASE = 'https://hdrezka.ag/';
+const REZKA_BASE = 'https://rezka.ag/';
 let activeBase = REZKA_BASE;
 const cookieJar = new Map([
     ['allowed_comments', '1'],
