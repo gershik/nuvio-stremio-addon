@@ -1,0 +1,33 @@
+{
+  "name": "nuvio-stremio-addon",
+  "version": "1.0.1",
+  "description": "Search-only Stremio addon using all Nuvio providers",
+  "main": "addon.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node addon.js",
+    "dev": "nodemon addon.js"
+  },
+  "dependencies": {
+    "stremio-addon-sdk": "^1.0.0",
+    "axios": "^1.7.7",
+    "cheerio": "^1.0.0-rc.12",
+    "crypto-js": "^4.2.0",
+    "cheerio-without-node-native": "1.0.0-rc.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=20 <25"
+  },
+  "keywords": [
+    "stremio",
+    "addon",
+    "nuvio",
+    "streaming",
+    "vercel"
+  ],
+  "author": "Himanshu Tyagi",
+  "license": "MIT"
+}

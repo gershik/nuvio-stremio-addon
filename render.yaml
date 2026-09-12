@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: nuvio-stremio-addon
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /manifest.json
+    autoDeployTrigger: off

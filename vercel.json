@@ -1,0 +1,5 @@
+{
+  "version": 2,
+  "builds": [{ "src": "addon.js", "use": "@vercel/node", "config": { "includeFiles": ["providers/**"], "maxDuration": 60 } }],
+  "routes": [{ "src": "/(.*)", "dest": "addon.js" }]
+}
