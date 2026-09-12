@@ -105,14 +105,6 @@ function fetchPage(url, options = {}) {
     });
 }
 
-// Generate random favs parameter
-function generateRandomFavs() {
-    const randomHex = () => Math.floor(Math.random() * 16).toString(16);
-    const generateSegment = (length) => Array.from({ length }, randomHex).join('');
-
-    return `${generateSegment(8)}-${generateSegment(4)}-${generateSegment(4)}-${generateSegment(4)}-${generateSegment(12)}`;
-}
-
 // Extract title and year from search result
 function extractTitleAndYear(input) {
     const regex = /^(.*?),.*?(\d{4})/;
@@ -356,8 +348,6 @@ function getStreamData(id, translator, media) {
         console.log(`[HDRezka] TV params: season=${media.season.number}, episode=${media.episode.number}`);
     }
 
-    const randomFavs = generateRandomFavs();
-    searchParams.append('favs', randomFavs);
     if (media.type === 'movie') {
         searchParams.append('is_camrip', translator.isCamrip ? '1' : '0');
         searchParams.append('is_ads', translator.isAds ? '1' : '0');
@@ -374,7 +364,6 @@ function getStreamData(id, translator, media) {
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
             'X-Requested-With': 'XMLHttpRequest',
-            'Origin': new URL(activeBase).origin,
             'Referer': activeBase
         }
     }).then(function (response) {
