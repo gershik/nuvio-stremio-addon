@@ -368,6 +368,10 @@ function getStreamData(id, translatorId, media) {
             const parsedResponse = JSON.parse(rawText);
             console.log(`[HDRezka] Parsed response successfully`);
 
+            if (!parsedResponse.url) {
+                console.log(`[HDRezka] Stream API response without URLs: ${rawText.substring(0, 500)}`);
+            }
+
             // Process video qualities and subtitles synchronously
             const qualities = parseVideoLinks(parsedResponse.url);
             const captions = parseSubtitles(parsedResponse.subtitle);
