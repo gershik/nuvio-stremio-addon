@@ -313,10 +313,18 @@ function getTranslatorId(url, id, media) {
         activeBase = new URL(response.url).origin + '/';
         console.log(`[HDRezka] Translator page response length: ${responseText.length}`);
 
+        const $ = cheerio.load(responseText);
+        const translator = $('.b-translator__item[data-translator_id="238"]').first();
+
         // Translator ID 238 represents the Original + subtitles player.
-        if (responseText.includes(`data-translator_id="238"`)) {
+        if (translator.length) {
             console.log(`[HDRezka] Found translator ID 238 (Original + subtitles)`);
-            return '238';
+            return {
+                id: '238',
+                isCamrip: translator.attr('data-camrip') === '1',
+                isAds: translator.attr('data-ads') === '1',
+                isDirector: translator.attr('data-director') === '1'
+            };
         }
 
         const functionName = media.type === 'movie' ? 'initCDNMoviesEvents' : 'initCDNSeriesEvents';
@@ -325,17 +333,17 @@ function getTranslatorId(url, id, media) {
         const translatorId = match ? match[1] : null;
 
         console.log(`[HDRezka] Extracted translator ID: ${translatorId}`);
-        return translatorId;
+        return translatorId ? { id: translatorId, isCamrip: false, isAds: false, isDirector: false } : null;
     });
 }
 
 // Get stream data from HDRezka
-function getStreamData(id, translatorId, media) {
-    console.log(`[HDRezka] Getting stream for id=${id}, translatorId=${translatorId}`);
+function getStreamData(id, translator, media) {
+    console.log(`[HDRezka] Getting stream for id=${id}, translatorId=${translator.id}`);
 
     const searchParams = new URLSearchParams();
     searchParams.append('id', id);
-    searchParams.append('translator_id', translatorId);
+    searchParams.append('translator_id', translator.id);
 
     if (media.type === 'tv') {
         searchParams.append('season', media.season.number.toString());
@@ -345,6 +353,11 @@ function getStreamData(id, translatorId, media) {
 
     const randomFavs = generateRandomFavs();
     searchParams.append('favs', randomFavs);
+    if (media.type === 'movie') {
+        searchParams.append('is_camrip', translator.isCamrip ? '1' : '0');
+        searchParams.append('is_ads', translator.isAds ? '1' : '0');
+        searchParams.append('is_director', translator.isDirector ? '1' : '0');
+    }
     searchParams.append('action', media.type === 'tv' ? 'get_stream' : 'get_movie');
 
     const fullUrl = `${activeBase}ajax/get_cdn_series/?t=${Date.now()}`;
@@ -470,14 +483,14 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
             }
 
             // Step 2: Get translator ID
-            return getTranslatorId(searchResult.url, searchResult.id, media).then(function (translatorId) {
-                if (!translatorId) {
+            return getTranslatorId(searchResult.url, searchResult.id, media).then(function (translator) {
+                if (!translator) {
                     console.log('[HDRezka] No translator ID found');
                     return [];
                 }
 
                 // Step 3: Get stream data
-                return getStreamData(searchResult.id, translatorId, media).then(function (streamData) {
+                return getStreamData(searchResult.id, translator, media).then(function (streamData) {
                     if (!streamData || !streamData.qualities) {
                         console.log('[HDRezka] No stream data found');
                         return [];
