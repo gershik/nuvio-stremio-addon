@@ -318,13 +318,33 @@ function getTranslatorId(url, id, media) {
                 isDirector: translator.attr('data-director') === '1'
             });
         });
+
+        // HDRezka embeds its default translator stream in the page. This remains
+        // usable when the AJAX endpoint withholds URLs from datacenter IPs.
+        const functionName = media.type === 'movie' ? 'initCDNMoviesEvents' : 'initCDNSeriesEvents';
+        const initPattern = new RegExp(`sof\\.tv\\.${functionName}\\(${id},\\s*(\\d+),[\\s\\S]*?(\\{.*?\\})\\);`, 'i');
+        const initMatch = responseText.match(initPattern);
+        if (initMatch) {
+            try {
+                const initial = JSON.parse(initMatch[2]);
+                const defaultTranslator = translators.find(item => item.id === initMatch[1]);
+                if (defaultTranslator && initial.streams) {
+                    defaultTranslator.embedded = {
+                        qualities: parseVideoLinks(initial.streams),
+                        captions: parseSubtitles(initial.subtitle)
+                    };
+                    console.log(`[HDRezka] Found embedded stream for translator ${defaultTranslator.id}`);
+                }
+            } catch (error) {
+                console.log(`[HDRezka] Could not parse embedded stream: ${error.message}`);
+            }
+        }
         translators.sort((a, b) => (b.id === '238') - (a.id === '238'));
         if (translators.length) {
             console.log(`[HDRezka] Found ${translators.length} available translators`);
             return translators;
         }
 
-        const functionName = media.type === 'movie' ? 'initCDNMoviesEvents' : 'initCDNSeriesEvents';
         const regexPattern = new RegExp(`sof\.tv\.${functionName}\\(${id}, ([^,]+)`, 'i');
         const match = responseText.match(regexPattern);
         const translatorId = match ? match[1] : null;
@@ -486,6 +506,10 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
                 // Step 3: Try available translators until one returns playable URLs.
                 function tryTranslator(index) {
                     if (index >= translators.length) return Promise.resolve(null);
+                    if (translators[index].embedded) {
+                        console.log(`[HDRezka] Using embedded stream for translator ${translators[index].id}`);
+                        return Promise.resolve(translators[index].embedded);
+                    }
                     return getStreamData(searchResult.id, translators[index], media).then(function (streamData) {
                         if (streamData && Object.keys(streamData.qualities || {}).length) return streamData;
                         console.log(`[HDRezka] Translator ${translators[index].id} returned no URLs; trying the next one`);
