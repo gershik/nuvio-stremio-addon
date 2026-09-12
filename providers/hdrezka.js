@@ -314,17 +314,22 @@ function getTranslatorId(url, id, media) {
         console.log(`[HDRezka] Translator page response length: ${responseText.length}`);
 
         const $ = cheerio.load(responseText);
-        const translator = $('.b-translator__item[data-translator_id="238"]').first();
-
-        // Translator ID 238 represents the Original + subtitles player.
-        if (translator.length) {
-            console.log(`[HDRezka] Found translator ID 238 (Original + subtitles)`);
-            return {
-                id: '238',
+        const translators = [];
+        $('.b-translator__item').each(function (_, element) {
+            const translator = $(element);
+            const translatorId = translator.attr('data-translator_id');
+            if (!translatorId || translator.hasClass('b-prem_translator')) return;
+            translators.push({
+                id: translatorId,
                 isCamrip: translator.attr('data-camrip') === '1',
                 isAds: translator.attr('data-ads') === '1',
                 isDirector: translator.attr('data-director') === '1'
-            };
+            });
+        });
+        translators.sort((a, b) => (b.id === '238') - (a.id === '238'));
+        if (translators.length) {
+            console.log(`[HDRezka] Found ${translators.length} available translators`);
+            return translators;
         }
 
         const functionName = media.type === 'movie' ? 'initCDNMoviesEvents' : 'initCDNSeriesEvents';
@@ -333,7 +338,7 @@ function getTranslatorId(url, id, media) {
         const translatorId = match ? match[1] : null;
 
         console.log(`[HDRezka] Extracted translator ID: ${translatorId}`);
-        return translatorId ? { id: translatorId, isCamrip: false, isAds: false, isDirector: false } : null;
+        return translatorId ? [{ id: translatorId, isCamrip: false, isAds: false, isDirector: false }] : [];
     });
 }
 
@@ -483,14 +488,22 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
             }
 
             // Step 2: Get translator ID
-            return getTranslatorId(searchResult.url, searchResult.id, media).then(function (translator) {
-                if (!translator) {
+            return getTranslatorId(searchResult.url, searchResult.id, media).then(function (translators) {
+                if (!translators.length) {
                     console.log('[HDRezka] No translator ID found');
                     return [];
                 }
 
-                // Step 3: Get stream data
-                return getStreamData(searchResult.id, translator, media).then(function (streamData) {
+                // Step 3: Try available translators until one returns playable URLs.
+                function tryTranslator(index) {
+                    if (index >= translators.length) return Promise.resolve(null);
+                    return getStreamData(searchResult.id, translators[index], media).then(function (streamData) {
+                        if (streamData && Object.keys(streamData.qualities || {}).length) return streamData;
+                        console.log(`[HDRezka] Translator ${translators[index].id} returned no URLs; trying the next one`);
+                        return tryTranslator(index + 1);
+                    });
+                }
+                return tryTranslator(0).then(function (streamData) {
                     if (!streamData || !streamData.qualities) {
                         console.log('[HDRezka] No stream data found');
                         return [];
